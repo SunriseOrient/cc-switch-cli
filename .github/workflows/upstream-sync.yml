@@ -1,22 +1,30 @@
 name: Upstream Sync
 
-# Polls upstream releases on a schedule, merges a newly published upstream
-# release into this fork's main branch, and — when the merge and the Windows
-# build both succeed — publishes a Windows-only release for this fork.
+# Single sync pipeline for this fork. It runs in two ordered phases and
+# publishes at most one release per run.
 #
-# Behaviour:
-#   * Sync source: the latest non-draft, non-prerelease release of UPSTREAM_REPO.
-#   * State: the merge commit message carries "[upstream-sync] <tag>"; an
-#     existing marker plus an existing release for that tag means "done".
-#   * Conflicts: only `.github/workflows/**` (keep ours), `src-tauri/Cargo.toml`
-#     (take upstream, then re-pin `repository`) and `src-tauri/Cargo.lock`
-#     (take upstream) are resolved automatically. Any other conflict aborts the
-#     run so local patches are never dropped silently.
-#   * Workflows: after merging, `.github/workflows` is restored verbatim from
-#     the pre-merge commit because upstream may have changed it.
-#   * Release assets: `cc-switch-cli-<tag>-windows-x64.zip` and
-#     `cc-switch-cli-windows-x64.zip` plus `checksums.txt`. No `latest.json` is
-#     produced, so `cc-switch update` uses the checksum fallback path.
+#   Phase 1 — CLI upstream (SaladDay/cc-switch-cli)
+#     Merges the latest upstream CLI release into main. Conflicts are only
+#     auto-resolved for `.github/workflows/**` (ours), `src-tauri/Cargo.toml`
+#     (upstream, then re-pin `repository`) and `src-tauri/Cargo.lock`
+#     (upstream); anything else fails the run before anything is pushed.
+#     After a merge, `.github/workflows` is restored verbatim from the
+#     pre-merge commit.
+#
+#   Phase 2 — desktop schema (farion1231/cc-switch)
+#     Runs after phase 1, because the CLI merge may already carry the schema
+#     bump. If the desktop's SCHEMA_VERSION is still ahead, the additive
+#     migrations are ported by scripts/port_desktop_schema.py. When both
+#     phases bring the schema to the same version, only the CLI release is
+#     built; no extra fork build is produced.
+#
+# Release identity:
+#   * CLI merge happened  -> tag = upstream CLI tag (Cargo version must equal it)
+#   * schema port only    -> tag = <cli-version>+cc.<n> (semver build metadata)
+#   * nothing changed     -> no build, no release
+#
+# State is implicit: the CLI phase uses the "[upstream-sync] <tag>" merge
+# commit, the schema phase compares SCHEMA_VERSION values.
 
 on:
   schedule:
@@ -35,6 +43,7 @@ permissions:
 env:
   RUST_VERSION: 1.91.1
   UPSTREAM_REPO: SaladDay/cc-switch-cli
+  DESKTOP_REPO: farion1231/cc-switch
 
 concurrency:
   group: main-sync
@@ -42,12 +51,12 @@ concurrency:
 
 jobs:
   sync:
-    name: Sync upstream release
+    name: Sync upstream + desktop schema
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     outputs:
-      tag: ${{ steps.plan.outputs.tag }}
-      sha: ${{ steps.plan.outputs.sha }}
+      tag: ${{ steps.finalize.outputs.tag }}
+      sha: ${{ steps.finalize.outputs.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,8 +64,19 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Plan sync
-        id: plan
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: main-sync
+
+      - name: Plan CLI sync
+        id: cli
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE: ${{ inputs.force }}
@@ -67,7 +87,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if ! RELEASE_JSON=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" 2>/dev/null); then
-            echo "Upstream has no published release yet; nothing to sync."
+            echo "CLI upstream has no published release yet."
             exit 0
           fi
 
@@ -75,10 +95,10 @@ jobs:
           IS_DRAFT=$(jq -r '.draft // false' <<<"${RELEASE_JSON}")
           IS_PRERELEASE=$(jq -r '.prerelease // false' <<<"${RELEASE_JSON}")
           if [ -z "${TAG}" ] || [ "${IS_DRAFT}" = "true" ] || [ "${IS_PRERELEASE}" = "true" ]; then
-            echo "Latest upstream release is not a stable published release; nothing to sync."
+            echo "Latest CLI release is not a stable published release."
             exit 0
           fi
-          echo "Latest upstream release: ${TAG}"
+          echo "Latest CLI release: ${TAG}"
 
           MARKER="[upstream-sync] ${TAG}"
           MARKER_SHA=$(git log --fixed-strings --grep="${MARKER}" --format=%H -n 1 || true)
@@ -88,7 +108,7 @@ jobs:
           fi
 
           if [ -n "${MARKER_SHA}" ] && [ "${RELEASE_EXISTS}" = "true" ]; then
-            echo "Already synced and released ${TAG}; nothing to do."
+            echo "CLI ${TAG} already synced and released."
             exit 0
           fi
           if [ -n "${MARKER_SHA}" ] && [ "${RELEASE_EXISTS}" != "true" ] && [ "${FORCE}" != "true" ]; then
@@ -96,76 +116,192 @@ jobs:
             exit 1
           fi
 
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          if [ -z "${MARKER_SHA}" ]; then
+            echo "need_merge=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Merge CLI release
+        id: merge
+        if: steps.cli.outputs.need_merge == 'true'
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.cli.outputs.tag }}"
           git fetch --no-tags origin main
           git checkout -B main origin/main
 
-          if [ -z "${MARKER_SHA}" ]; then
-            git fetch --no-tags "https://github.com/${UPSTREAM_REPO}.git" "refs/tags/${TAG}:refs/upstream-sync/${TAG}"
-            UPSTREAM_COMMIT=$(git rev-parse "refs/upstream-sync/${TAG}^{commit}")
-            BASE=$(git rev-parse HEAD)
+          git fetch --no-tags "https://github.com/${UPSTREAM_REPO}.git" "refs/tags/${TAG}:refs/upstream-sync/${TAG}"
+          UPSTREAM_COMMIT=$(git rev-parse "refs/upstream-sync/${TAG}^{commit}")
+          BASE=$(git rev-parse HEAD)
 
-            if git merge-base --is-ancestor "${UPSTREAM_COMMIT}" HEAD; then
-              echo "${TAG} is already contained in main; skipping."
-              exit 0
+          if git merge-base --is-ancestor "${UPSTREAM_COMMIT}" HEAD; then
+            echo "${TAG} is already contained in main; skipping merge."
+            exit 0
+          fi
+
+          echo "Merging ${TAG} (${UPSTREAM_COMMIT}) into ${BASE}."
+          if ! git merge --no-ff --no-commit "${UPSTREAM_COMMIT}"; then
+            if [ ! -f .git/MERGE_HEAD ]; then
+              echo "::error::git merge failed before producing a merge state."
+              exit 1
             fi
-
-            echo "Merging ${TAG} (${UPSTREAM_COMMIT}) into ${BASE}."
-            if ! git merge --no-ff --no-commit "${UPSTREAM_COMMIT}"; then
-              if [ ! -f .git/MERGE_HEAD ]; then
-                echo "::error::git merge failed before producing a merge state."
-                exit 1
-              fi
-              mapfile -t CONFLICTED < <(git diff --name-only --diff-filter=U)
-              UNRESOLVED=()
-              for path in "${CONFLICTED[@]}"; do
-                case "${path}" in
-                  .github/workflows/*) git checkout --ours -- "${path}" ;;
-                  src-tauri/Cargo.toml) git checkout --theirs -- "${path}" ;;
-                  src-tauri/Cargo.lock) git checkout --theirs -- "${path}" ;;
-                  *) UNRESOLVED+=("${path}") ;;
-                esac
-              done
-              if [ "${#UNRESOLVED[@]}" -gt 0 ]; then
-                printf '::error::Unresolved merge conflicts: %s\n' "${UNRESOLVED[*]}"
-                git merge --abort
-                exit 1
-              fi
-              git add -A
-              echo "Auto-resolved ${#CONFLICTED[@]} conflicted file(s)."
+            mapfile -t CONFLICTED < <(git diff --name-only --diff-filter=U)
+            UNRESOLVED=()
+            for path in "${CONFLICTED[@]}"; do
+              case "${path}" in
+                .github/workflows/*) git checkout --ours -- "${path}" ;;
+                src-tauri/Cargo.toml) git checkout --theirs -- "${path}" ;;
+                src-tauri/Cargo.lock) git checkout --theirs -- "${path}" ;;
+                *) UNRESOLVED+=("${path}") ;;
+              esac
+            done
+            if [ "${#UNRESOLVED[@]}" -gt 0 ]; then
+              printf '::error::Unresolved merge conflicts: %s\n' "${UNRESOLVED[*]}"
+              git merge --abort
+              exit 1
             fi
+            git add -A
+            echo "Auto-resolved ${#CONFLICTED[@]} conflicted file(s)."
+          fi
 
-            # Upstream may have edited or added workflow files; restore ours.
-            git rm -r -q -f --ignore-unmatch .github/workflows
-            git checkout "${BASE}" -- .github/workflows
+          # Upstream may have edited or added workflow files; restore ours.
+          git rm -r -q -f --ignore-unmatch .github/workflows
+          git checkout "${BASE}" -- .github/workflows
 
-            # Self-update must keep pointing at this fork, not upstream.
-            if grep -q '^repository = ' src-tauri/Cargo.toml; then
-              sed -i "s|^repository = .*|repository = \"https://github.com/${GITHUB_REPOSITORY}\"|" src-tauri/Cargo.toml
-              git add src-tauri/Cargo.toml
+          # Self-update must keep pointing at this fork, not upstream.
+          if grep -q '^repository = ' src-tauri/Cargo.toml; then
+            sed -i "s|^repository = .*|repository = \"https://github.com/${GITHUB_REPOSITORY}\"|" src-tauri/Cargo.toml
+            git add src-tauri/Cargo.toml
+          fi
+
+          echo "merged=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Plan desktop schema
+        id: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if ! RELEASE=$(gh api "repos/${DESKTOP_REPO}/releases/latest" 2>/dev/null); then
+            echo "Desktop repository has no published release."
+            exit 0
+          fi
+
+          DTAG=$(jq -r '.tag_name // empty' <<<"${RELEASE}")
+          DDRAFT=$(jq -r '.draft // false' <<<"${RELEASE}")
+          DPRE=$(jq -r '.prerelease // false' <<<"${RELEASE}")
+          if [ -z "${DTAG}" ] || [ "${DDRAFT}" = "true" ] || [ "${DPRE}" = "true" ]; then
+            echo "Latest desktop release is not a stable published release."
+            exit 0
+          fi
+
+          mkdir -p "${RUNNER_TEMP}/desktop"
+          gh api "repos/${DESKTOP_REPO}/contents/src-tauri/src/database/mod.rs?ref=${DTAG}" \
+            --jq '.content' | base64 -d > "${RUNNER_TEMP}/desktop/mod.rs"
+          gh api "repos/${DESKTOP_REPO}/contents/src-tauri/src/database/schema.rs?ref=${DTAG}" \
+            --jq '.content' | base64 -d > "${RUNNER_TEMP}/desktop/schema.rs"
+
+          OURS=$(sed -n 's/.*SCHEMA_VERSION: i32 = \([0-9][0-9]*\);/\1/p' src-tauri/src/database/mod.rs | head -n 1)
+          THEIRS=$(sed -n 's/.*SCHEMA_VERSION: i32 = \([0-9][0-9]*\);/\1/p' "${RUNNER_TEMP}/desktop/mod.rs" | head -n 1)
+          echo "Schema: cli v${OURS}, desktop v${THEIRS} (${DTAG})"
+          echo "tag=${DTAG}" >> "${GITHUB_OUTPUT}"
+
+          if [ "${THEIRS}" -le "${OURS}" ]; then
+            echo "Schema already current; no desktop port needed."
+            exit 0
+          fi
+
+          python3 scripts/port_desktop_schema.py \
+            --desktop-mod "${RUNNER_TEMP}/desktop/mod.rs" \
+            --desktop-schema "${RUNNER_TEMP}/desktop/schema.rs" \
+            --cli-root .
+
+          echo "ported=true" >> "${GITHUB_OUTPUT}"
+          echo "schema=${THEIRS}" >> "${GITHUB_OUTPUT}"
+
+      - name: Test database layer
+        if: steps.desktop.outputs.ported == 'true'
+        working-directory: src-tauri
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo test --lib database::
+
+      - name: Commit and publish to main
+        id: finalize
+        run: |
+          set -euo pipefail
+
+          MERGED="${{ steps.merge.outputs.merged }}"
+          PORTED="${{ steps.desktop.outputs.ported }}"
+          CLI_TAG="${{ steps.cli.outputs.tag }}"
+          DESKTOP_TAG="${{ steps.desktop.outputs.tag }}"
+          DESKTOP_SCHEMA="${{ steps.desktop.outputs.schema }}"
+
+          if [ "${MERGED}" != "true" ] && [ "${PORTED}" != "true" ]; then
+            echo "Nothing to sync."
+            exit 0
+          fi
+
+          if [ "${MERGED}" = "true" ]; then
+            BASE_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)
+            EXPECTED="${CLI_TAG#v}"
+            if [ "${BASE_VERSION}" != "${EXPECTED}" ]; then
+              echo "::error::Cargo.toml version ${BASE_VERSION} differs from upstream tag ${CLI_TAG}; refusing to publish."
+              exit 1
             fi
+            RELEASE_TAG="${CLI_TAG}"
+          else
+            BASE=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)
+            BASE=${BASE%%+*}
+            git fetch --tags --force origin
+            MAX=$(git tag -l "v${BASE}+cc.*" | sed -E 's/.*\+cc\.([0-9]+)$/\1/' | sort -n | tail -n 1)
+            NEXT=$(( ${MAX:-0} + 1 ))
+            VERSION="${BASE}+cc.${NEXT}"
+            python3 - "${VERSION}" <<'PY'
+          import re, sys, pathlib
+          new = sys.argv[1]
+          path = pathlib.Path("src-tauri/Cargo.toml")
+          text = path.read_text(encoding="utf-8")
+          text, count = re.subn(r'^version = "[^"]+"', f'version = "{new}"', text, count=1, flags=re.M)
+          if count != 1:
+              raise SystemExit("could not rewrite Cargo.toml version")
+          path.write_text(text, encoding="utf-8", newline="\n")
+          PY
+            RELEASE_TAG="v${VERSION}"
+            git add src-tauri/Cargo.toml
+          fi
 
-            cat > /tmp/sync-commit-msg <<EOF
-          ${MARKER}
+          git add -A
 
-          Merge upstream release ${UPSTREAM_REPO} ${TAG} into main.
+          if [ "${MERGED}" = "true" ]; then
+            cat > "${RUNNER_TEMP}/commit-msg" <<EOF
+          [upstream-sync] ${CLI_TAG}
+
+          Merge upstream release ${UPSTREAM_REPO} ${CLI_TAG} into main.
+          Desktop schema port: ${PORTED:-false} (${DESKTOP_REPO} ${DESKTOP_TAG}, schema v${DESKTOP_SCHEMA:-n/a}).
 
           - Restores this fork's .github/workflows after the merge.
           - Keeps "repository" pointed at ${GITHUB_REPOSITORY} for self-update.
 
           Co-Authored-By: Claude Code <noreply@anthropic.com>
           EOF
-            git commit --no-verify -F /tmp/sync-commit-msg
+          else
+            cat > "${RUNNER_TEMP}/commit-msg" <<EOF
+          [desktop-sync] ${DESKTOP_REPO} ${DESKTOP_TAG} schema-${DESKTOP_SCHEMA}
+
+          Ports the desktop app's additive schema migrations into this CLI fork.
+
+          Co-Authored-By: Claude Code <noreply@anthropic.com>
+          EOF
           fi
 
-          VERSION="${TAG#v}"
-          MANIFEST_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)
-          if [ "${MANIFEST_VERSION}" != "${VERSION}" ]; then
-            echo "::error::Cargo.toml version ${MANIFEST_VERSION} differs from upstream tag ${TAG}; refusing to publish."
-            exit 1
-          fi
-
+          git commit --no-verify -F "${RUNNER_TEMP}/commit-msg"
           git push origin HEAD:main
-          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+          echo "tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
           echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
 
   build-windows:
@@ -190,7 +326,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: upstream-sync-windows
+          key: main-sync-windows
 
       - name: Build
         working-directory: src-tauri
@@ -265,6 +401,6 @@ jobs:
             --title "CC Switch CLI ${TAG}" \
             --target "${SHA}" \
             --latest \
-            --notes "Synced from upstream release ${TAG} and built for Windows x86_64." \
+            --notes "Windows x86_64 build synced from upstream (CLI and/or desktop database schema)." \
             dist/cc-switch-cli-*.zip \
             dist/checksums.txt
