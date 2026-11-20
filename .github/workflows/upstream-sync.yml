@@ -37,7 +37,7 @@ env:
   UPSTREAM_REPO: SaladDay/cc-switch-cli
 
 concurrency:
-  group: upstream-sync
+  group: main-sync
   cancel-in-progress: false
 
 jobs:
@@ -160,7 +160,8 @@ jobs:
           VERSION="${TAG#v}"
           MANIFEST_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)
           if [ "${MANIFEST_VERSION}" != "${VERSION}" ]; then
-            echo "::warning::Cargo.toml version ${MANIFEST_VERSION} differs from upstream tag ${TAG}."
+            echo "::error::Cargo.toml version ${MANIFEST_VERSION} differs from upstream tag ${TAG}; refusing to publish."
+            exit 1
           fi
 
           git push origin HEAD:main

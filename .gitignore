@@ -30,6 +30,7 @@ scripts/*
 !scripts/benchmark_cc_switch.py
 !scripts/check_benchmark_thresholds.py
 !scripts/test_benchmark_cc_switch.py
+!scripts/port_desktop_schema.py
 
 .agent/
 .agents/
