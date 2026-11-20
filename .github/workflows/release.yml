@@ -1,9 +1,11 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # Releases for this fork are produced by upstream-sync.yml (Windows only).
+  # Keep this workflow for manual full-platform builds; it must not trigger on
+  # tag pushes, otherwise every synced release would be rebuilt here as well
+  # and would require the minisign signing secret.
+  workflow_dispatch:
 
 permissions:
   contents: write

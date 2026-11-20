@@ -1,0 +1,269 @@
+name: Upstream Sync
+
+# Polls upstream releases on a schedule, merges a newly published upstream
+# release into this fork's main branch, and — when the merge and the Windows
+# build both succeed — publishes a Windows-only release for this fork.
+#
+# Behaviour:
+#   * Sync source: the latest non-draft, non-prerelease release of UPSTREAM_REPO.
+#   * State: the merge commit message carries "[upstream-sync] <tag>"; an
+#     existing marker plus an existing release for that tag means "done".
+#   * Conflicts: only `.github/workflows/**` (keep ours), `src-tauri/Cargo.toml`
+#     (take upstream, then re-pin `repository`) and `src-tauri/Cargo.lock`
+#     (take upstream) are resolved automatically. Any other conflict aborts the
+#     run so local patches are never dropped silently.
+#   * Workflows: after merging, `.github/workflows` is restored verbatim from
+#     the pre-merge commit because upstream may have changed it.
+#   * Release assets: `cc-switch-cli-<tag>-windows-x64.zip` and
+#     `cc-switch-cli-windows-x64.zip` plus `checksums.txt`. No `latest.json` is
+#     produced, so `cc-switch update` uses the checksum fallback path.
+
+on:
+  schedule:
+    # Every 6 hours, off the top of the hour.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild and publish even when the release step previously failed'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  RUST_VERSION: 1.91.1
+  UPSTREAM_REPO: SaladDay/cc-switch-cli
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync upstream release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Plan sync
+        id: plan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! RELEASE_JSON=$(gh api "repos/${UPSTREAM_REPO}/releases/latest" 2>/dev/null); then
+            echo "Upstream has no published release yet; nothing to sync."
+            exit 0
+          fi
+
+          TAG=$(jq -r '.tag_name // empty' <<<"${RELEASE_JSON}")
+          IS_DRAFT=$(jq -r '.draft // false' <<<"${RELEASE_JSON}")
+          IS_PRERELEASE=$(jq -r '.prerelease // false' <<<"${RELEASE_JSON}")
+          if [ -z "${TAG}" ] || [ "${IS_DRAFT}" = "true" ] || [ "${IS_PRERELEASE}" = "true" ]; then
+            echo "Latest upstream release is not a stable published release; nothing to sync."
+            exit 0
+          fi
+          echo "Latest upstream release: ${TAG}"
+
+          MARKER="[upstream-sync] ${TAG}"
+          MARKER_SHA=$(git log --fixed-strings --grep="${MARKER}" --format=%H -n 1 || true)
+          RELEASE_EXISTS=false
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          fi
+
+          if [ -n "${MARKER_SHA}" ] && [ "${RELEASE_EXISTS}" = "true" ]; then
+            echo "Already synced and released ${TAG}; nothing to do."
+            exit 0
+          fi
+          if [ -n "${MARKER_SHA}" ] && [ "${RELEASE_EXISTS}" != "true" ] && [ "${FORCE}" != "true" ]; then
+            echo "::error::${TAG} was merged (${MARKER_SHA}) but no release exists. Re-run with force=true to publish it."
+            exit 1
+          fi
+
+          git fetch --no-tags origin main
+          git checkout -B main origin/main
+
+          if [ -z "${MARKER_SHA}" ]; then
+            git fetch --no-tags "https://github.com/${UPSTREAM_REPO}.git" "refs/tags/${TAG}:refs/upstream-sync/${TAG}"
+            UPSTREAM_COMMIT=$(git rev-parse "refs/upstream-sync/${TAG}^{commit}")
+            BASE=$(git rev-parse HEAD)
+
+            if git merge-base --is-ancestor "${UPSTREAM_COMMIT}" HEAD; then
+              echo "${TAG} is already contained in main; skipping."
+              exit 0
+            fi
+
+            echo "Merging ${TAG} (${UPSTREAM_COMMIT}) into ${BASE}."
+            if ! git merge --no-ff --no-commit "${UPSTREAM_COMMIT}"; then
+              if [ ! -f .git/MERGE_HEAD ]; then
+                echo "::error::git merge failed before producing a merge state."
+                exit 1
+              fi
+              mapfile -t CONFLICTED < <(git diff --name-only --diff-filter=U)
+              UNRESOLVED=()
+              for path in "${CONFLICTED[@]}"; do
+                case "${path}" in
+                  .github/workflows/*) git checkout --ours -- "${path}" ;;
+                  src-tauri/Cargo.toml) git checkout --theirs -- "${path}" ;;
+                  src-tauri/Cargo.lock) git checkout --theirs -- "${path}" ;;
+                  *) UNRESOLVED+=("${path}") ;;
+                esac
+              done
+              if [ "${#UNRESOLVED[@]}" -gt 0 ]; then
+                printf '::error::Unresolved merge conflicts: %s\n' "${UNRESOLVED[*]}"
+                git merge --abort
+                exit 1
+              fi
+              git add -A
+              echo "Auto-resolved ${#CONFLICTED[@]} conflicted file(s)."
+            fi
+
+            # Upstream may have edited or added workflow files; restore ours.
+            git rm -r -q -f --ignore-unmatch .github/workflows
+            git checkout "${BASE}" -- .github/workflows
+
+            # Self-update must keep pointing at this fork, not upstream.
+            if grep -q '^repository = ' src-tauri/Cargo.toml; then
+              sed -i "s|^repository = .*|repository = \"https://github.com/${GITHUB_REPOSITORY}\"|" src-tauri/Cargo.toml
+              git add src-tauri/Cargo.toml
+            fi
+
+            cat > /tmp/sync-commit-msg <<EOF
+          ${MARKER}
+
+          Merge upstream release ${UPSTREAM_REPO} ${TAG} into main.
+
+          - Restores this fork's .github/workflows after the merge.
+          - Keeps "repository" pointed at ${GITHUB_REPOSITORY} for self-update.
+
+          Co-Authored-By: Claude Code <noreply@anthropic.com>
+          EOF
+            git commit --no-verify -F /tmp/sync-commit-msg
+          fi
+
+          VERSION="${TAG#v}"
+          MANIFEST_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)
+          if [ "${MANIFEST_VERSION}" != "${VERSION}" ]; then
+            echo "::warning::Cargo.toml version ${MANIFEST_VERSION} differs from upstream tag ${TAG}."
+          fi
+
+          git push origin HEAD:main
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+
+  build-windows:
+    name: Build Windows package
+    needs: sync
+    if: needs.sync.outputs.tag != ''
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: upstream-sync-windows
+
+      - name: Build
+        working-directory: src-tauri
+        run: cargo build --release
+
+      - name: Package
+        shell: pwsh
+        env:
+          TAG: ${{ needs.sync.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item src-tauri/target/release/cc-switch.exe dist/cc-switch.exe
+          Compress-Archive -Path dist/cc-switch.exe -DestinationPath "dist/cc-switch-cli-$env:TAG-windows-x64.zip" -Force
+          Copy-Item "dist/cc-switch-cli-$env:TAG-windows-x64.zip" dist/cc-switch-cli-windows-x64.zip
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum cc-switch-cli-*.zip > checksums.txt
+          cat checksums.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cc-switch-cli-windows-x64
+          path: |
+            dist/cc-switch-cli-*.zip
+            dist/checksums.txt
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [sync, build-windows]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cc-switch-cli-windows-x64
+          path: dist
+
+      - name: Create version branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git push origin "${{ needs.sync.outputs.sha }}:refs/heads/release/${{ needs.sync.outputs.tag }}"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.sync.outputs.tag }}
+          SHA: ${{ needs.sync.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; leaving it untouched."
+            exit 0
+          fi
+          gh release create "${TAG}" \
+            --title "CC Switch CLI ${TAG}" \
+            --target "${SHA}" \
+            --latest \
+            --notes "Synced from upstream release ${TAG} and built for Windows x86_64." \
+            dist/cc-switch-cli-*.zip \
+            dist/checksums.txt
