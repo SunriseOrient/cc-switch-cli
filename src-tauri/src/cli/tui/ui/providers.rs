@@ -754,7 +754,7 @@ mod tests {
         assert!(!all.contains("weekly_limit"), "{all}");
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     #[test]
     fn claude_provider_list_key_bar_hides_launch_temp_hint_on_non_unix() {
         let _lock = super::super::tests::lock_env();
