@@ -133,8 +133,8 @@ fn start_codex(
                 println!(
                     "{}",
                     crate::cli::ui::warning(crate::t!(
-                        "--shared-sessions is only supported on Unix; launching with an isolated temporary CODEX_HOME.",
-                        "--shared-sessions 仅在 Unix 生效，本次将使用隔离的临时 CODEX_HOME 启动。"
+                        "--shared-sessions is only supported on Unix; this run uses an isolated temporary CODEX_HOME.",
+                        "--shared-sessions 仅在 Unix 生效，本次使用隔离的临时 CODEX_HOME。"
                     ))
                 );
             }

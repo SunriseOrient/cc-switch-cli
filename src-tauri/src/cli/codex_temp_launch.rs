@@ -186,7 +186,10 @@ pub(crate) fn exec_prepared_codex(
         Ok(()) => {}
         Err(err) if exit_code == 0 => return Err(err),
         Err(err) => {
+            // Match the Unix handoff, which prints the persist failure to
+            // stderr and keeps the original child failure authoritative.
             log::warn!(target: "codex_temp_launch", "{err}");
+            eprintln!("cc-switch: {err}");
         }
     }
 
@@ -211,6 +214,17 @@ pub(crate) fn exec_prepared_codex(
 #[cfg(windows)]
 fn capture_temp_codex_state(prepared: &PreparedCodexLaunch) -> Result<(), AppError> {
     crate::cli::orphan_scan::remove_sidecar_for(&prepared.codex_home);
+
+    // A missing home must not reach the capture helper: it would read no
+    // files and overwrite the provider's stored credentials with empties.
+    if !prepared.codex_home.exists() {
+        return Err(capture_failed_error(
+            &prepared.provider_id,
+            "临时 CODEX_HOME 已不存在，已跳过回写以避免覆盖已保存的凭据".to_string(),
+            "temporary CODEX_HOME is gone; skipped capture to avoid overwriting stored credentials"
+                .to_string(),
+        ));
+    }
 
     let status = std::process::Command::new(&prepared.cc_switch_executable)
         .arg("internal")
@@ -633,6 +647,26 @@ mod tests {
             codex_home.exists(),
             "temp home must survive the capture step"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn capture_refuses_when_temp_home_is_missing() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let codex_home = temp_dir.path().join("cc-switch-codex-demo-4242-2");
+
+        let prepared = PreparedCodexLaunch {
+            executable: PathBuf::from("C:/tools/codex.exe"),
+            cc_switch_executable: PathBuf::from("C:/tools/cc-switch.exe"),
+            provider_id: "demo".to_string(),
+            codex_home: codex_home.clone(),
+        };
+
+        // The helper must never run against a gone home: it would read nothing
+        // and overwrite the provider's stored credentials with empties.
+        let err = capture_temp_codex_state(&prepared).expect_err("missing home must fail");
+        assert!(err.to_string().contains("CODEX_HOME"));
+        assert!(!codex_home.exists());
     }
 
     #[cfg(unix)]

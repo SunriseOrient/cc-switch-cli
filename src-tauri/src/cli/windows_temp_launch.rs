@@ -260,11 +260,11 @@ pub(crate) fn build_windows_command_line(program: &OsStr, args: &[OsString]) -> 
         }
     }
 
-    // When the command after `/c` starts with a quote and the line carries
-    // more than two quotes (e.g. a quoted .cmd shim path followed by a quoted
-    // argument), cmd.exe strips the first and last quote instead of passing
-    // the command through intact. Wrapping the whole remainder in one extra
-    // pair preserves the inner quoting.
+    // cmd.exe strips the first and last quote of the command after `/c` when
+    // that command line carries more than two quotes (e.g. a quoted .cmd shim
+    // path followed by a quoted argument), which mangles the command. Wrap the
+    // whole remainder in one extra pair whenever it starts with a quote; the
+    // one- and two-quote cases behave identically with and without the wrap.
     if let Some(start) = command_start {
         if line[start..].starts_with('"') {
             let rest = line.split_off(start);
