@@ -413,6 +413,18 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use tempfile::TempDir;
 
+    /// Start time to record for a PID that must look alive. Linux compares it
+    /// with `/proc` to detect PID reuse; other Unix flavours ignore the value.
+    #[cfg(all(unix, target_os = "linux"))]
+    fn live_pid_start_nanos(pid: u32) -> u128 {
+        read_pid_start_time_nanos(pid).unwrap_or(0)
+    }
+
+    #[cfg(all(unix, not(target_os = "linux")))]
+    fn live_pid_start_nanos(_pid: u32) -> u128 {
+        0
+    }
+
     #[test]
     fn parse_claude_filename() {
         let info = parse_cc_switch_name(
@@ -753,8 +765,15 @@ mod tests {
         std::fs::create_dir(&entry_path).expect("create entry");
 
         // Sidecar points at this very test process, which is obviously
-        // alive. The Unix is_pid_alive ignores nanos, so any nanos works.
-        write_child_sidecar(&entry_path, std::process::id(), 0).expect("write sidecar");
+        // alive. Linux cross-checks the recorded start time against /proc to
+        // detect PID reuse, so it needs the real start time; other Unix
+        // flavours ignore the nanos entirely.
+        write_child_sidecar(
+            &entry_path,
+            std::process::id(),
+            live_pid_start_nanos(std::process::id()),
+        )
+        .expect("write sidecar");
 
         let entry = TempEntryInfo {
             path: entry_path.clone(),
