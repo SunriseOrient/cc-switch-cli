@@ -6,7 +6,7 @@
 
 **対話型 TUI またはスクリプトで利用できる CLI から、Claude Code、Codex、Gemini、OpenCode、Hermes、OpenClaw、Pi を一元管理できます。**
 
-[![バージョン](https://img.shields.io/badge/version-5.11.3-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
+[![バージョン](https://img.shields.io/badge/version-5.11.4-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![対応プラットフォーム](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Rust 製](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![ライセンス](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -75,6 +75,18 @@
     <td>
       本プロジェクトをご支援いただいている <b>PackyCode</b> に感謝します！PackyCode は、Claude Code、Codex、Gemini などに対応する、信頼性と効率性に優れた API 中継サービスです。<br/>
       CC-Switch CLI ユーザー向けの割引として、<a href="https://www.packyapi.com/register?aff=cc-switch-cli">こちらのリンク</a>から登録し、チャージ時にクーポンコード <code>cc-switch-cli</code> を入力すると、<b>10% オフ</b>になります。
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
+      <a href="https://www.ipwo.net/?ref=githubswitchcli">
+        <img src="assets/partners/logos/ipwo.png" alt="IPWO" width="150">
+      </a>
+    </td>
+    <td>
+      本プロジェクトをご支援いただいている <b>IPWO</b> に感謝します！IPWO は無料でお試しいただける住宅用プロキシサービスで、<b>195 以上の国と地域にわたる 9,000 万以上のアクティブな住宅用 IP</b> を提供しています。ローテーション型、固定型、通信量無制限の住宅用プロキシに対応し、HTTP(S) と SOCKS5 を利用できます。<br/>
+      AI ツールの開発、地域をまたぐネットワークアクセス、API のデバッグ、データ収集など、さまざまな地域でのアプリケーション開発に向けて、柔軟な住宅用プロキシの選択肢を提供します。<br/>
+      <a href="https://www.ipwo.net/?ref=githubswitchcli">こちらのリンク</a>から IPWO にアクセスし、クーポンコード <code>0200</code> を入力すると、<b>10% オフ</b>になります。
     </td>
   </tr>
   <tr>

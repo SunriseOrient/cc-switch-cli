@@ -6,7 +6,7 @@
 
 **Manage Claude Code, Codex, Gemini, OpenCode, Hermes, OpenClaw, and Pi from one interactive TUI or scriptable CLI.**
 
-[![Version](https://img.shields.io/badge/version-5.11.3-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
+[![Version](https://img.shields.io/badge/version-5.11.4-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -90,6 +90,18 @@ Differences from upstream:
     <td>
       Thanks to <b>PackyCode</b> for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex, Gemini, and more. <br/>
       PackyCode provides special discounts for our software users: register via <a href="https://www.packyapi.com/register?aff=cc-switch-cli">this link</a> and use promo code <code>cc-switch-cli</code> when recharging to get <b>10% off</b>.
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
+      <a href="https://www.ipwo.net/?ref=githubswitchcli">
+        <img src="assets/partners/logos/ipwo.png" alt="IPWO" width="150">
+      </a>
+    </td>
+    <td>
+      Thanks to <b>IPWO</b> for sponsoring this project! IPWO offers a free trial and access to over <b>90 million active residential IPs across 195+ countries and regions</b>. It supports rotating, static, and unlimited-bandwidth residential proxies, with HTTP(S) and SOCKS5 compatibility.<br/>
+      From AI tool development and cross-region network access to API debugging and data collection, IPWO gives developers flexible residential proxy options for applications in different regions.<br/>
+      Visit <a href="https://www.ipwo.net/?ref=githubswitchcli">IPWO</a> and use promo code <code>0200</code> for <b>10% off</b>.
     </td>
   </tr>
   <tr>

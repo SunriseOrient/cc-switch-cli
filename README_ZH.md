@@ -6,7 +6,7 @@
 
 **通过交互式 TUI 或脚本化 CLI，统一管理 Claude Code、Codex、Gemini、OpenCode、Hermes、OpenClaw 和 Pi。**
 
-[![Version](https://img.shields.io/badge/version-5.11.3-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
+[![Version](https://img.shields.io/badge/version-5.11.4-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -88,6 +88,18 @@
       CC-Switch CLI 专属优惠：通过
       <a href="https://www.packyapi.com/register?aff=cc-switch-cli">此链接</a>
       注册，并在充值时填写优惠码 <code>cc-switch-cli</code>，即可享受 <b>9 折优惠</b>。
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
+      <a href="https://www.ipwo.net/?ref=githubswitchcli">
+        <img src="assets/partners/logos/ipwo.png" alt="IPWO" width="150">
+      </a>
+    </td>
+    <td>
+      感谢 <b>IPWO</b> 赞助本项目！IPWO 可以免费测试，提供覆盖 <b>195+ 个国家和地区的 9000 万+ 活跃住宅 IP 资源</b>，支持动态住宅代理、静态住宅代理及不限量住宅代理，并兼容 HTTP(S) 和 SOCKS5 协议。<br/>
+      无论是 AI 工具开发、跨区域网络访问，还是 API 调试与数据采集，IPWO 都能为开发者提供灵活的住宅代理选择，帮助拓展不同地区的网络应用场景。<br/>
+      通过<a href="https://www.ipwo.net/?ref=githubswitchcli">此链接</a>访问 IPWO，使用优惠码 <code>0200</code>，即可<b>减免 10%</b>。
     </td>
   </tr>
   <tr>
