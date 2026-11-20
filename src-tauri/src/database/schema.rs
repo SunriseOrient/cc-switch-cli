@@ -676,6 +676,23 @@ impl Database {
                         }
                         Self::set_user_version(conn, 26)?;
                     }
+                    26 => {
+                        // 技能仓库支持 GitLab：仓库和已安装的技能各记一个主机。
+                        // 老行不用回填——skill_repos.host 靠列默认值就是 github.com，
+                        // skills.repo_host 为 NULL 也按 github.com 读。
+                        if Self::table_exists(conn, "skill_repos")? {
+                            Self::add_column_if_missing(
+                                conn,
+                                "skill_repos",
+                                "host",
+                                "TEXT NOT NULL DEFAULT 'github.com'",
+                            )?;
+                        }
+                        if Self::table_exists(conn, "skills")? {
+                            Self::add_column_if_missing(conn, "skills", "repo_host", "TEXT")?;
+                        }
+                        Self::set_user_version(conn, 27)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
