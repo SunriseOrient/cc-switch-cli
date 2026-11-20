@@ -24,6 +24,24 @@
 
 **更新日志：** [CHANGELOG.md](CHANGELOG.md)
 
+### 为什么有这个仓库
+
+本仓库是 [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli) 的**个人分支**，不是官方上游项目。它存在的原因很具体：在 **Windows** 上使用 `cc-switch start`。上游 CLI 的临时供应商启动目前只支持 Unix，因此本分支补齐了 Windows 支持，并附带一条仅面向 Windows 的发布流水线。
+
+代码来源：
+
+| 来源仓库 | 使用了它的什么 |
+| --- | --- |
+| [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli) | 本分支跟踪的 CLI 主体。其发布的 Release 会由 [`.github/workflows/upstream-sync.yml`](.github/workflows/upstream-sync.yml) 自动合并到本仓库。 |
+| [farion1231/cc-switch](https://github.com/farion1231/cc-switch) | 两个 CLI 分支共同来源的原始桌面项目。 |
+| [AloneAtWar/cc-switch-cli](https://github.com/AloneAtWar/cc-switch-cli)（`feat/windows-start-support`） | Windows 临时启动实现（Job Object 托管、`cmd.exe` shim 处理、临时目录孤儿清理），已合并进本仓库。 |
+
+与上游的差异：
+
+- Claude / Codex 的 Windows 临时启动（`cc-switch start`，以及 TUI 中的 `o` 键）。
+- Release 只构建 **Windows x86_64** 安装包，且由本仓库发布；`cc-switch update` 从本仓库查找更新，不会去上游。
+- 上游同步只做合并且失败即停：`.github/workflows/`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 之外的冲突不会被自动解决，而是让同步失败；合并后 `.github/workflows/` 一律还原为本仓库自己的版本。
+
 ---
 
 ## ❤️赞助商

@@ -28,6 +28,24 @@ This project is a **CLI fork** of [CC-Switch](https://github.com/farion1231/cc-s
 
 **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
+### Why this repository exists
+
+This is a **personal fork of [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli)**, not an official upstream project. It exists for one practical reason: to run `cc-switch start` on **Windows**. The upstream CLI supports temporary provider launch only on Unix, so this fork carries that support plus a Windows-only release pipeline.
+
+Code it is built from:
+
+| Source | What is used from it |
+| --- | --- |
+| [SaladDay/cc-switch-cli](https://github.com/SaladDay/cc-switch-cli) | The CLI this fork tracks. Its published releases are merged here automatically by [`.github/workflows/upstream-sync.yml`](.github/workflows/upstream-sync.yml). |
+| [farion1231/cc-switch](https://github.com/farion1231/cc-switch) | The original desktop project both CLI forks derive from. |
+| [AloneAtWar/cc-switch-cli](https://github.com/AloneAtWar/cc-switch-cli) (`feat/windows-start-support`) | The Windows temporary-launch work (Job Object supervision, `cmd.exe` shim handling, orphan-temp cleanup) merged into this repository. |
+
+Differences from upstream:
+
+- Windows temporary launch for Claude and Codex (`cc-switch start`, and the `o` key in the TUI).
+- Releases are built for **Windows x86_64 only** and are published by this repository; `cc-switch update` resolves releases from this repository, never from upstream.
+- Upstream sync is merge-only and fail-closed: conflicts outside `.github/workflows/`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` stop the sync instead of being auto-resolved, and `.github/workflows/` is always restored to this fork's version after a merge.
+
 ---
 
 ## ❤️ Sponsor
