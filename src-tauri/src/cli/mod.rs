@@ -833,7 +833,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn parses_start_claude_native_args_after_double_dash() {
         let cli = Cli::parse_from([
@@ -934,7 +934,7 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn parses_start_codex_multiple_native_args_after_double_dash() {
         let cli = Cli::parse_from([

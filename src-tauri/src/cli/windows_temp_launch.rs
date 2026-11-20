@@ -243,8 +243,12 @@ pub(crate) fn build_windows_command_line(program: &OsStr, args: &[OsString]) -> 
     line.push_str(&quote_windows_arg(&program_str));
 
     let mut after_c = false;
+    let mut command_start: Option<usize> = None;
     for arg in args {
         line.push(' ');
+        if after_c && command_start.is_none() {
+            command_start = Some(line.len());
+        }
         let arg_str = arg.to_string_lossy();
         if is_cmd && after_c {
             line.push_str(&quote_windows_arg_for_cmd(&arg_str));
@@ -255,6 +259,21 @@ pub(crate) fn build_windows_command_line(program: &OsStr, args: &[OsString]) -> 
             }
         }
     }
+
+    // When the command after `/c` starts with a quote and the line carries
+    // more than two quotes (e.g. a quoted .cmd shim path followed by a quoted
+    // argument), cmd.exe strips the first and last quote instead of passing
+    // the command through intact. Wrapping the whole remainder in one extra
+    // pair preserves the inner quoting.
+    if let Some(start) = command_start {
+        if line[start..].starts_with('"') {
+            let rest = line.split_off(start);
+            line.push('"');
+            line.push_str(&rest);
+            line.push('"');
+        }
+    }
+
     std::ffi::OsStr::new(&line)
         .encode_wide()
         .chain(Some(0))
@@ -1047,6 +1066,28 @@ mod tests {
         // Should contain quoted foo&bar but not normal
         assert!(s.contains("\"foo&bar\""));
         assert!(s.contains("normal"));
+    }
+
+    /// cmd.exe strips the first and last quote after `/c` when the command
+    /// line holds more than two quotes, so a quoted shim path plus a quoted
+    /// argument must be wrapped in one extra pair.
+    #[cfg(windows)]
+    #[test]
+    fn build_windows_command_line_wraps_quoted_cmd_command() {
+        let line = build_windows_command_line(
+            OsStr::new("cmd.exe"),
+            &[
+                OsString::from("/c"),
+                OsString::from("C:\\Program Files\\nodejs\\claude.cmd"),
+                OsString::from("--settings"),
+                OsString::from("C:\\Users\\John Smith\\settings.json"),
+            ],
+        );
+        let s = String::from_utf16_lossy(&line);
+        assert_eq!(
+            s.trim_end_matches('\0'),
+            "cmd.exe /c \"\"C:\\Program Files\\nodejs\\claude.cmd\" --settings \"C:\\Users\\John Smith\\settings.json\"\""
+        );
     }
 
     /// Verify that `create_secret_file_with_acl` creates a file with an

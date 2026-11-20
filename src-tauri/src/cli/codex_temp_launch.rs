@@ -180,6 +180,16 @@ pub(crate) fn exec_prepared_codex(
         Some(&prepared.codex_home),
     )?;
 
+    // Mirror the Unix handoff: persist what Codex wrote into the temporary
+    // home, and only let a capture failure override a successful session.
+    match capture_temp_codex_state(prepared) {
+        Ok(()) => {}
+        Err(err) if exit_code == 0 => return Err(err),
+        Err(err) => {
+            log::warn!(target: "codex_temp_launch", "{err}");
+        }
+    }
+
     if exit_code != 0 {
         return Err(AppError::localized(
             "codex.temp_launch_exit_nonzero",
@@ -188,6 +198,53 @@ pub(crate) fn exec_prepared_codex(
         ));
     }
     Ok(())
+}
+
+/// Persist the files Codex wrote into its temporary `CODEX_HOME` back to the
+/// provider, matching the Unix handoff script's `capture-codex-temp` step.
+///
+/// The capture runs in a separate `cc-switch internal` process. That process
+/// performs the startup orphan scan, so the child sidecar written by the
+/// launcher is removed first: the just-exited child would otherwise look like
+/// an orphan and the temporary home would be deleted before it is read. With
+/// the sidecar gone the scan falls back to the still-running launcher PID.
+#[cfg(windows)]
+fn capture_temp_codex_state(prepared: &PreparedCodexLaunch) -> Result<(), AppError> {
+    crate::cli::orphan_scan::remove_sidecar_for(&prepared.codex_home);
+
+    let status = std::process::Command::new(&prepared.cc_switch_executable)
+        .arg("internal")
+        .arg("capture-codex-temp")
+        .arg(&prepared.provider_id)
+        .arg(&prepared.codex_home)
+        .status()
+        .map_err(|err| {
+            capture_failed_error(
+                &prepared.provider_id,
+                format!("无法运行回写进程: {err}"),
+                format!("failed to run helper: {err}"),
+            )
+        })?;
+
+    if !status.success() {
+        return Err(capture_failed_error(
+            &prepared.provider_id,
+            format!("回写进程退出码 {:?}", status.code()),
+            format!("helper exited with {:?}", status.code()),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn capture_failed_error(provider_id: &str, zh_detail: String, en_detail: String) -> AppError {
+    AppError::localized(
+        "codex.temp_launch_capture_failed",
+        format!("持久化供应商 {provider_id} 的临时 Codex 登录状态失败：{zh_detail}"),
+        format!(
+            "Failed to persist temporary Codex login state for provider {provider_id}: {en_detail}"
+        ),
+    )
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -545,6 +602,37 @@ mod tests {
 
         assert_eq!(program, PathBuf::from("C:/tools/codex.exe"));
         assert_eq!(args, native_args);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn capture_removes_child_sidecar_before_running_helper() {
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let codex_home = temp_dir.path().join("cc-switch-codex-demo-4242-1");
+        std::fs::create_dir_all(&codex_home).expect("create temp codex home");
+        crate::cli::orphan_scan::write_child_sidecar(&codex_home, 4242, 1)
+            .expect("write child sidecar");
+
+        let prepared = PreparedCodexLaunch {
+            executable: PathBuf::from("C:/tools/codex.exe"),
+            cc_switch_executable: temp_dir.path().join("missing-cc-switch.exe"),
+            provider_id: "demo".to_string(),
+            codex_home: codex_home.clone(),
+        };
+
+        let err = capture_temp_codex_state(&prepared).expect_err("missing helper must fail");
+
+        assert!(err.to_string().contains("demo"));
+        // The helper's startup orphan scan must not see a dead child PID and
+        // delete the temp home before it is read.
+        assert!(
+            !crate::cli::orphan_scan::sidecar_path_for(&codex_home).exists(),
+            "sidecar must be removed before the helper process starts"
+        );
+        assert!(
+            codex_home.exists(),
+            "temp home must survive the capture step"
+        );
     }
 
     #[cfg(unix)]
