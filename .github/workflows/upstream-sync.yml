@@ -64,6 +64,16 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Re-runs and dispatches from an older ref start at that ref's commit;
+      # align with the current main so the merge and the schema port always
+      # operate on the real tip and the final push fast-forwards.
+      - name: Align with main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git checkout -B main origin/main
+          git reset --hard origin/main
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@master
         with:
