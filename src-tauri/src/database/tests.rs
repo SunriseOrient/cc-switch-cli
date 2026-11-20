@@ -463,7 +463,7 @@ fn schema_migration_repairs_legacy_workbuddy_versions() {
         Database::set_user_version(&conn, version).unwrap();
         for _ in 0..2 {
             Database::apply_schema_migrations_on_conn(&conn).unwrap();
-            assert_eq!(Database::get_user_version(&conn).unwrap(), 26);
+            assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
             for table in ["mcp_servers", "skills"] {
                 let flags: (i64, i64, i64, i64) = conn
                     .query_row(

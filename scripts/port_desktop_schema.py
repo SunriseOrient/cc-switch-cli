@@ -42,6 +42,12 @@ ALLOWED_IDENTIFIERS = (
     "let",
     "else",
 )
+
+# `assert_eq!(Database::get_user_version(...).unwrap(), 26);` — a literal
+# current-version assertion that must follow SCHEMA_VERSION when it is bumped.
+VERSION_ASSERT_TEMPLATE = (
+    r"(get_user_version\([^)]*\)\s*\.unwrap\(\)\s*,\s*){version}\)"
+)
 FORBIDDEN = (
     "execute",
     "ALTER",
@@ -222,6 +228,23 @@ def bump_version(mod_path: Path, new_version: int) -> None:
     mod_path.write_text(new_text, encoding="utf-8", newline="\n")
 
 
+def rewrite_version_assertions(tests_path: Path, old_version: int) -> int:
+    """Point literal ``get_user_version`` assertions at SCHEMA_VERSION.
+
+    Upstream tests assert the final schema version with a literal number; after
+    a bump those assertions compare against a stale value. Rewriting them keeps
+    the port self-consistent even when upstream adds more of them.
+    """
+    if not tests_path.exists():
+        return 0
+    text = tests_path.read_text(encoding="utf-8")
+    pattern = re.compile(VERSION_ASSERT_TEMPLATE.format(version=old_version))
+    new_text, count = pattern.subn(r"\1SCHEMA_VERSION)", text)
+    if count:
+        tests_path.write_text(new_text, encoding="utf-8", newline="\n")
+    return count
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--desktop-mod", required=True, type=Path)
@@ -260,6 +283,13 @@ def main() -> int:
     cli_schema.write_text(patched_schema, encoding="utf-8", newline="\n")
     bump_version(cli_mod, desktop)
     print(f"updated SCHEMA_VERSION to {desktop}")
+
+    rewritten = rewrite_version_assertions(
+        args.cli_root / "src-tauri/src/database/tests.rs", ours
+    )
+    if rewritten:
+        print(f"rewrote {rewritten} hardcoded version assertion(s) in tests.rs")
+
     return 0
 
 
